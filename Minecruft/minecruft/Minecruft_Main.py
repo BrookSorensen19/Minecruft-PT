@@ -16,10 +16,11 @@ Options:
     --encoder_weights_file <weights>    Encoder Weights
 """
 
+import argparse
 import multiprocessing
 import json
 import time
-from docopt import docopt
+#from docopt import docopt
 import logging
 import hashlib
 
@@ -246,7 +247,7 @@ def decrypt_load(cipher_str, key):
     cryptr = AES.new(key, AES.MODE_ECB)
     message = cryptr.decrypt(cipher_str)
     return message
-
+"""
 if __name__ == '__main__':
     #Parse input arguments, require mode, dest_ip, dest_port, and fwd_ports.
     #logging.basicConfig(level=30, format="%(message)s")
@@ -337,9 +338,90 @@ if __name__ == '__main__':
         
         for process in process_list: 
             process.join()
-
+            
     except KeyboardInterrupt:
         print("Keyboard Interrupt - Stopping server")
 
         for process in process_list: 
             process.terminate()
+    """
+
+if __name__ == '__main__':
+    # Set up the argument parser
+    parser = argparse.ArgumentParser(description="Minecruft Main Script")
+    parser.add_argument("mode", choices=["client", "proxy", "<config>"], help="Mode of operation (client, proxy, or config)")
+    parser.add_argument("aes_keyfile", help="Path to AES key file")
+    parser.add_argument("dest_ip", help="Destination IP address")
+    parser.add_argument("dest_port", type=int, help="Destination port")
+    parser.add_argument("fwd_ports", help="Comma-separated list of forwarding ports")
+    parser.add_argument("encoder_actions_file", help="Path to encoder actions file")
+    parser.add_argument("decoder_actions_file", help="Path to decoder actions file")
+    parser.add_argument("hmm_file", help="Path to HMM file")
+    parser.add_argument("-t", "--test", action="store_true", help="Send test message through Minecruft")
+    parser.add_argument("--proxy_port", type=int, default=25566, help="Proxy listen address (default: 25566)")
+    parser.add_argument("--encoder_weights_file", help="Encoder weights file")
+
+    args = parser.parse_args()
+
+    if args.mode == "<config>":
+        with open(args.config, "r") as conffp:
+            args = json.load(conffp)
+
+    hmm_file = args.hmm_file
+    ports = args.fwd_ports
+    dest_port = args.dest_port
+    dest_ip = args.dest_ip
+    encoder_actions_file = args.encoder_actions_file
+    decoder_actions_file = args.decoder_actions_file
+    encoder_weights_file = args.encoder_weights_file
+
+    aes_keyfile = args.aes_keyfile
+    with open(aes_keyfile, "rb") as f:
+        aes_key = f.read()
+
+    decoder_actions = {}
+    encoder_actions = {}
+
+    with open(decoder_actions_file) as f:
+        decoder_actions = json.load(f)
+
+    with open(encoder_actions_file) as f:
+        encoder_actions = json.load(f)
+
+    encoder_weights = None
+    if encoder_weights_file:
+        with open(encoder_weights_file) as f:
+            encoder_weights = json.load(f)
+
+    # Initialize queues
+    sniffed_packets_queue = multiprocessing.Queue()
+    encrypt_queue = multiprocessing.Queue()
+    decrypt_queue = multiprocessing.Queue()
+    response_queue = multiprocessing.Queue()
+
+    fwd_addr = (dest_ip, dest_port)
+
+    # Client and Server specific setup
+    if args.mode == "client":
+        direction = "dst"
+        forward_packet = client_forward_packet
+        fte_func_args = (encrypt_queue, decrypt_queue, encoder_actions, 
+                         decoder_actions, dest_ip, dest_port, encoder_weights, hmm_file)
+    elif args.mode == "proxy":
+        direction = "src"
+        proxy_port = args.proxy_port
+        forward_packet = proxy_forward_packet
+        fte_func_args = (encrypt_queue, decrypt_queue, encoder_actions, decoder_actions,
+                         dest_ip, dest_port, "0.0.0.0", proxy_port, encoder_weights, hmm_file)
+    else:
+        exit()
+
+    if args.test:
+        print("Starting Test")
+        process_functions = {receive_tcp_data: (ports, direction, sniffed_packets_queue), 
+                             sim_tcp_data: (sniffed_packets_queue, encrypt_queue, direction, aes_key), 
+                             forward_packet: fte_func_args}
+    else:
+        process_functions = {receive_tcp_data: (ports, direction, sniffed_packets_queue), 
+                             encrypt_tcp_data: (sniffed_packets_queue, encrypt_queue, direction, aes_key), 
+                             forward_packet: fte_func_args,
