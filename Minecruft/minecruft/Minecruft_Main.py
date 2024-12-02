@@ -425,3 +425,14 @@ if __name__ == '__main__':
         process_functions = {receive_tcp_data: (ports, direction, sniffed_packets_queue), 
                              encrypt_tcp_data: (sniffed_packets_queue, encrypt_queue, direction, aes_key), 
                              forward_packet: fte_func_args,
+                             inject_tcp_packets: (response_queue, )}
+    
+    processes = []
+    for func, args in process_functions.items():
+        p = multiprocessing.Process(target=func, args=args)
+        p.start()
+        processes.append(p)
+
+    for p in processes:
+        p.join()
+    
